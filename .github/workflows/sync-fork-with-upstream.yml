@@ -1,0 +1,55 @@
+name: Sync fork with upstream
+
+# Keeps this fork's `main` up to date with hitarth-gg/zenshin-API's `main`.
+# The upstream repo pushes a fresh zenshin_sql.gz roughly every 2 days —
+# whenever this sync pulls that in, it changes zenshin_sql.gz on OUR main
+# too, which is exactly what the existing sync-to-supabase.yml workflow
+# triggers on (push to main, path: zenshin_sql.gz). So this one workflow
+# is the entire "keep my own Supabase copy fresh" mechanism — no scraping
+# code needed on our end at all.
+#
+# Requires nothing beyond the default GITHUB_TOKEN, since this only
+# modifies our own fork.
+
+on:
+  schedule:
+    # Every 6 hours. Upstream only updates every ~2 days, so this is just
+    # slack to catch a new push reasonably quickly without polling
+    # constantly. Cheap to run since it's a no-op when there's nothing new.
+    - cron: "0 */6 * * *"
+  workflow_dispatch:  # manual "sync now" button in the Actions tab
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Merge upstream/main into this fork's main
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          response=$(curl -s -w '\n%{http_code}' -X POST \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/$REPO/merge-upstream" \
+            -d '{"branch":"main"}')
+
+          http_code=$(echo "$response" | tail -n1)
+          body=$(echo "$response" | sed '$d')
+          echo "$body"
+
+          if [ "$http_code" -ge 300 ]; then
+            echo "::error::merge-upstream failed with HTTP $http_code"
+            echo "If this says there's a merge conflict, it almost certainly means"
+            echo "something in THIS fork's main was hand-edited and now conflicts"
+            echo "with an upstream change to the same file/lines. Resolve it manually"
+            echo "once (git fetch upstream && git merge upstream/main), then this"
+            echo "workflow will keep working on its own again."
+            exit 1
+          fi
+
+          merge_type=$(echo "$body" | grep -o '"merge_type":"[^"]*"' || true)
+          echo "Sync result: $merge_type"
