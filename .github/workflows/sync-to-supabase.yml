@@ -1,4 +1,18 @@
-name: Restore dump to Supabase
+ name: Restore dump to Supabase
+
+# OPTIONAL replacement for the original .github/workflows/sync-to-supabase.yml
+# in your fork. Identical except the last step (clearing the ORIGINAL
+# maintainer's own mappings-server caches) is removed, since you don't have
+# that infrastructure and it would just fail harmlessly every run.
+#
+# Tradeoff vs. leaving the original file untouched: this makes your fork's
+# main diverge slightly from upstream. In practice this is very low risk —
+# upstream's frequent pushes are to zenshin_sql.gz, not this workflow file,
+# so a future merge-upstream conflict here is unlikely — but it is a real,
+# if small, possibility. If you'd rather have zero divergence risk, skip
+# this file and just accept the cosmetic failed step on the original one;
+# the actual Supabase restore still succeeds either way, since that step
+# runs before the cache-clear step.
 
 on:
   workflow_dispatch:
@@ -56,31 +70,16 @@ jobs:
           fi
 
           echo "Restore complete."
-      - name: Clear mappings server caches
+
+      - name: Grant PostgREST access
         env:
-          ADMIN_KEY: ${{ secrets.CACHE_ADMIN_KEY }}
-          SERVER_URL_1: ${{ secrets.MAPPINGS_SERVER_URL_1 }}
-          SERVER_URL_2: ${{ secrets.MAPPINGS_SERVER_URL_2 }}
+          SUPABASE_CONN: ${{ secrets.SUPABASE_CONNECTION }}
+          PGSSLMODE: require
         run: |
-          failed=0
-          for url in "$SERVER_URL_1" "$SERVER_URL_2"; do
-            echo "Clearing cache on $url..."
-            http_status=$(curl -s -o /tmp/response.json -w "%{http_code}" \
-              -X DELETE "$url/cache/all" \
-              -H "x-admin-key: $ADMIN_KEY")
-
-            echo "Response from $url:"
-            cat /tmp/response.json
-            echo ""
-
-            if [ "$http_status" -ne 200 ]; then
-              echo "Cache clear failed for $url with status $http_status"
-              failed=1
-            else
-              echo "Cache cleared successfully on $url."
-            fi
-          done
-
-          if [ "$failed" -ne 0 ]; then
-            exit 1
-          fi
+          # Supabase projects created after May 30 2026 need explicit grants
+          # for the auto-REST API (PostgREST) to read a freshly restored
+          # table -- without this, every restore would silently re-lock the
+          # table down and your API would start returning empty results
+          # again after each sync.
+          psql "$SUPABASE_CONN" -c "GRANT SELECT ON public.store TO anon;"
+          psql "$SUPABASE_CONN" -c "GRANT SELECT ON public.store TO authenticated;"
