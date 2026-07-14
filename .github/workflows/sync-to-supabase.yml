@@ -1,4 +1,4 @@
- name: Restore dump to Supabase
+name: Restore dump to Supabase
 
 # OPTIONAL replacement for the original .github/workflows/sync-to-supabase.yml
 # in your fork. Identical except the last step (clearing the ORIGINAL
